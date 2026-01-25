@@ -1,5 +1,7 @@
 #include <cstddef>
+#include <cassert>
 #include <mma.h>
+#include <stdint.h>
 
 #define WARP_SZ 32
 #define WMMA_M  16
@@ -10,6 +12,7 @@ using namespace nvcuda;
 
 namespace bipartite{
 namespace tensorcores{
+
 
 /** gemm
   * @brief perform a gemm on two matricies of type I using tensor wmma
@@ -51,6 +54,61 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
     }
 
     wmma::store_matrix_sync(res + c_row * n + c_col, acc, n, wmma::mem_row_major);
+}
+
+/** gemm_wrapper
+  * @brief interface for gemm designed to be called from general-purpose code
+  */
+template<typename I, typename R>
+void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superblock_sz=0)
+{
+    I* d_matrix_a;
+    I* h_matrix_a;
+    I* d_matrix_b;
+    I* h_matrix_b;
+    R* d_matrix_c;
+    R* h_matrix_c;
+
+    cudaStream_t streams[2];
+    cudaStreamCreate(&streams[0]);
+    cudaStreamCreate(&streams[1]);
+
+    cudaMalloc( &d_matrix_a, sizeof( I ) * 2 * superblock_sz * n );
+    cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
+    cudaMalloc( &d_matrix_c, sizeof( R ) * 2 * superblock_sz * n);
+
+    // Copy contents of matrix_a and matrix_b to pinned memory
+    cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n);
+    cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * n * n);
+    cudaMallocHost((void**) &h_matrix_c, sizeof( R ) * n * n);
+    memcpy(h_matrix_a, matrix_a,  sizeof( I ) * n * n);
+    memcpy(h_matrix_b, matrix_b,  sizeof( I ) * n * n);
+
+    // Copy b to device (needs to be done first since b is row-major)
+    cudaMemcpy( d_matrix_b, h_matrix_b,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
+
+    assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
+
+    // i+=2 because two superblocks are computed in separate streams concurrently
+    for (std::size_t i = 0; i < n/superblock_sz; i+=2)
+    {
+      cudaMemcpyAsync( d_matrix_a, h_matrix_a+superblock_sz*i*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[0] );
+      cudaMemcpyAsync( d_matrix_a + superblock_sz*n, h_matrix_a+superblock_sz*(i+1)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[1] );
+
+      const dim3 blockDim { WARP_SZ * 4, 4, 1 };
+      dim3 gridDim;
+      gridDim.x = (n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
+      gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
+      gemm<I, R><<< gridDim, blockDim, 0, streams[0] >>>(d_matrix_a, d_matrix_b, d_matrix_c, n, superblock_sz);
+      gemm<I, R><<< gridDim, blockDim, 0, streams[1] >>>(d_matrix_a+superblock_sz*n, d_matrix_b, d_matrix_c+superblock_sz*n, n, superblock_sz);
+
+      cudaMemcpyAsync(  h_matrix_c + superblock_sz*i*n, d_matrix_c, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[0] );
+      cudaMemcpyAsync(  h_matrix_c + superblock_sz*(i+1)*n, d_matrix_c + superblock_sz*n, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[1] );
+    }
+
+    cudaDeviceSynchronize();
+    memcpy(res, h_matrix_c,  sizeof( R ) * n * n);
+
 }
 
 } // namespace tensorcores

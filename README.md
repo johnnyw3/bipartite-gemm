@@ -52,9 +52,8 @@ library in `bench`:
 A clean is required before switching configurations.
 
 # Install & run
-Simply copy the `bipartite-gemm` directory to your system's `include`
-directory to install the library for use in other applications. The interface is
-provided within the `bipartite` namespace.
+Simply run `make install PREFIX=/your/sysroot/dir` to install the library for
+use in other applications. The interface is provided within the `bipartite` namespace.
 
 A `bench` executable is generated in the `build` directory for testing and verification purposes. 
 Simply run this file to both verify output correctness and benchmark
