@@ -116,6 +116,15 @@ public:
         cudaMemset(d_matrix_c, 0x0, sizeof(R) * matrix_c.size() );
     }
 
+    void unprepare_device(){
+        if (d_matrix_a != nullptr) cudaFree(d_matrix_a);
+        if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
+        if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
+        if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
+        if (h_matrix_b != nullptr) cudaFree(h_matrix_b);
+        if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
+    }
+
     void get_product_from_device(){
         cudaMemcpy( matrix_c.data(), d_matrix_c, sizeof(R) * matrix_c.size(), cudaMemcpyDeviceToHost );
     }
@@ -141,7 +150,9 @@ public:
             cudaDeviceSynchronize();
             get_product_from_device();
             auto const end = std::chrono::high_resolution_clock::now();
+
             time_sum += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            unprepare_device();
         }
 
         get_results(title, time_sum/num_runs, num_runs);
@@ -189,6 +200,13 @@ public:
             memcpy(matrix_c.data(), h_matrix_c,  sizeof( R ) * matrix_c.size());
             auto const end = std::chrono::high_resolution_clock::now();
             time_sum += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+            cudaFree( &d_matrix_a );
+            cudaFree( &d_matrix_b );
+            cudaFree( &d_matrix_c );
+            cudaFreeHost( (void*) h_matrix_a );
+            cudaFreeHost( (void*) h_matrix_b );
+            cudaFreeHost( (void*) h_matrix_c );
         }
 
         get_results(title, time_sum/num_runs, num_runs);

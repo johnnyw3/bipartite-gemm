@@ -1,5 +1,6 @@
 #include <chrono>   // for timing
 #include <iostream> // std::cout, std::endl
+#include <bipartite/GEMM.h>
 #include <iterator> // std::ostream_iterator
 #include <cstdlib> // EXIT_SUCCESS
 #include <vector>
@@ -9,7 +10,6 @@
 #endif
 
 #include "bench/gemm_experiment.h"
-#include "bipartite-gemm/GEMM.h"
 
 using namespace bipartite;
 
@@ -29,9 +29,6 @@ int main(int argc, char **argv)
     std::random_device rd;
     // Generate a random seed to ensure all experiments use the same random values
     unsigned int seed = rd();
-
-    // NOTE: running 10 iterations of all tests with n = 8192 uses >24G of
-    //       system RAM, so we've just specified two runs for the moment
 
     /*
     ****************************
@@ -62,7 +59,7 @@ int main(int argc, char **argv)
             gridDim.x = (tensorCoreExpFp32.get_n() + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (tensorCoreExpFp32.get_n() + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim >>>(a, b, c, tensorCoreExpFp32.get_n());
-            }, "Tensor Core GEMM FP32 Implementation", 2 );
+            }, "Tensor Core GEMM FP32 Implementation", 10 );
 
     /*
     **********************************
@@ -79,7 +76,7 @@ int main(int argc, char **argv)
             gridDim.x = (padded_n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim, 0, stream >>>(a, b, c, padded_n, superblock_sz);
-            }, "Tensor Core GEMM FP32 (two streams) Implementation", 2 );
+            }, "Tensor Core GEMM FP32 (two streams) Implementation", 10 );
     /*
     **********************************
     * Tensor Core FP16 GEMM Experiment
@@ -95,7 +92,7 @@ int main(int argc, char **argv)
             gridDim.x = (padded_n + (WMMA_M * blockDim.x / WARP_SZ - 1)) / (WMMA_M * blockDim.x / WARP_SZ);
             gridDim.y = (padded_n + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
             tensorcores::gemm<half, half><<< gridDim, blockDim >>>(a, b, c, padded_n);
-            }, "Tensor Core GEMM FP16 Implementation", 2 );
+            }, "Tensor Core GEMM FP16 Implementation", 10 );
 
 
     /*
@@ -114,7 +111,7 @@ int main(int argc, char **argv)
             gridDim.x = (padded_n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, half><<< gridDim, blockDim, 0, stream >>>(a, b, c, padded_n, superblock_sz);
-            }, "Tensor Core GEMM FP16 (two streams) Implementation", 2 );
+            }, "Tensor Core GEMM FP16 (two streams) Implementation", 10 );
 
     /*
     **********************************
@@ -130,7 +127,7 @@ int main(int argc, char **argv)
             gridDim.x = (tensorCoreExpInt8.get_n() + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (tensorCoreExpInt8.get_n() + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<unsigned char, int><<< gridDim, blockDim >>>(a, b, c, tensorCoreExpInt8.get_n());
-            }, "Tensor Core GEMM INT8 Implementation", 2 );
+            }, "Tensor Core GEMM INT8 Implementation", 10 );
 
     return EXIT_SUCCESS;
 }
