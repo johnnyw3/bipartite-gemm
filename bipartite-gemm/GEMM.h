@@ -69,7 +69,6 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     I* d_matrix_a;
     I* h_matrix_a;
     I* d_matrix_b;
-    I* h_matrix_b;
     R* d_matrix_c;
     R* h_matrix_c;
 
@@ -83,15 +82,18 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
     cudaMalloc( &d_matrix_c, sizeof( R ) * 2 * superblock_sz * n);
 
-    // Copy contents of matrix_a and matrix_b to pinned memory
+    // Create pinned memory buffers for matricies we will be accessing
+    // multiple times
     cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n);
-    cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * n * n);
     cudaMallocHost((void**) &h_matrix_c, c_size);
-    memcpy(h_matrix_a, matrix_a,  sizeof( I ) * n * n);
-    memcpy(h_matrix_b, matrix_b,  sizeof( I ) * n * n);
 
-    // Copy b to device (needs to be done first since b is row-major)
-    cudaMemcpy( d_matrix_b, h_matrix_b,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
+    // Copy b to device using the pinned buffer we created for a
+    // (needs to be done first since b is row-major)
+    memcpy(h_matrix_a, matrix_b,  sizeof( I ) * n * n);
+    cudaMemcpy( d_matrix_b, h_matrix_a,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
+
+    // Now we can actually use a's pinned buffer for a
+    memcpy(h_matrix_a, matrix_a,  sizeof( I ) * n * n);
 
     assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
 
@@ -119,7 +121,6 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     cudaFree( &d_matrix_b );
     cudaFree( &d_matrix_c );
     cudaFreeHost( (void*) h_matrix_a );
-    cudaFreeHost( (void*) h_matrix_b );
     cudaFreeHost( (void*) h_matrix_c );
 
 }

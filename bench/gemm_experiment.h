@@ -35,7 +35,6 @@ public:
 
     const std::vector<I> matrix_b;
     I* d_matrix_b;
-    I* h_matrix_b;
 
     std::vector<R> matrix_c;
     R* d_matrix_c;
@@ -57,7 +56,6 @@ public:
                                                         d_matrix_b{nullptr},
                                                         d_matrix_c{nullptr},
                                                         h_matrix_a{nullptr},
-                                                        h_matrix_b{nullptr},
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{n},
                                                         streams{nullptr},
@@ -73,7 +71,6 @@ public:
                                                         d_matrix_b{nullptr},
                                                         d_matrix_c{nullptr},
                                                         h_matrix_a{nullptr},
-                                                        h_matrix_b{nullptr},
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{superblock_sz},
                                                         streams{std::vector<cudaStream_t>(2)},
@@ -90,7 +87,6 @@ public:
         if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
         if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
         if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
-        if (h_matrix_b != nullptr) cudaFree(h_matrix_b);
         if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
     }
 
@@ -102,15 +98,19 @@ public:
         cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
         cudaMalloc( &d_matrix_c, sizeof( R ) * n * n );
  
-        // Copy contents of matrix_a and matrix_b to pinned memory
+        // Create pinned memory buffers for matricies we will be accessing
+        // multiple times 
         cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * matrix_a.size());
-        cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * matrix_b.size());
-        cudaMallocHost((void**) &h_matrix_b, sizeof( R ) * matrix_c.size());
-        memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
-        memcpy(h_matrix_b, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+        cudaMallocHost((void**) &h_matrix_c, sizeof( R ) * matrix_b.size());
 
+        // Copy b to device using the pinned buffer we created for a 
+        // (needs to be done first since b is row-major)
+        memcpy(h_matrix_a, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+        cudaMemcpy( d_matrix_b, h_matrix_a,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+
+        // Now we can actually use a's pinned buffer for a
+        memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
         cudaMemcpy( d_matrix_a, h_matrix_a, sizeof( I ) * matrix_a.size(), cudaMemcpyHostToDevice );
-        cudaMemcpy( d_matrix_b, h_matrix_b, sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
 
         // Set contents of matrix_c to zero on device
         cudaMemset(d_matrix_c, 0x0, sizeof(R) * matrix_c.size() );
@@ -121,7 +121,6 @@ public:
         if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
         if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
         if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
-        if (h_matrix_b != nullptr) cudaFree(h_matrix_b);
         if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
     }
 
@@ -170,15 +169,18 @@ public:
             cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
             cudaMalloc( &d_matrix_c, sizeof( R ) * 2 * superblock_sz * n);
 
-            // Copy contents of matrix_a and matrix_b to pinned memory
+            // Create pinned memory buffers for matricies we will be accessing
+            // multiple times
             cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * matrix_a.size());
-            cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * matrix_b.size());
             cudaMallocHost((void**) &h_matrix_c, sizeof( R ) * matrix_b.size());
-            memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
-            memcpy(h_matrix_b, matrix_b.data(),  sizeof( I ) * matrix_b.size());
 
-            // Copy b to device (needs to be done first since b is row-major)
-            cudaMemcpy( d_matrix_b, h_matrix_b,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+            // Copy b to device using the pinned buffer we created for a
+            // (needs to be done first since b is row-major)
+            memcpy(h_matrix_a, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+            cudaMemcpy( d_matrix_b, h_matrix_a,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+
+            // Now we can actually use a's pinned buffer for a
+            memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
 
             assert( n * n == matrix_a.size() && "GemmExperiment need to be of size n x n" );
             assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
@@ -205,7 +207,6 @@ public:
             cudaFree( &d_matrix_b );
             cudaFree( &d_matrix_c );
             cudaFreeHost( (void*) h_matrix_a );
-            cudaFreeHost( (void*) h_matrix_b );
             cudaFreeHost( (void*) h_matrix_c );
         }
 
