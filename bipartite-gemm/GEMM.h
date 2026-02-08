@@ -84,8 +84,8 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
 
     // Create pinned memory buffers for matricies we will be accessing
     // multiple times
-    cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n);
-    cudaMallocHost((void**) &h_matrix_c, c_size);
+    cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n + c_size);
+    h_matrix_c = (R*)(h_matrix_a + n * n);
 
     // Copy b to device using the pinned buffer we created for a
     // (needs to be done first since b is row-major)
@@ -121,7 +121,6 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     cudaFree( &d_matrix_b );
     cudaFree( &d_matrix_c );
     cudaFreeHost( (void*) h_matrix_a );
-    cudaFreeHost( (void*) h_matrix_c );
 
 }
 

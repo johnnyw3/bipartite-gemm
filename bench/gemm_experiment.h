@@ -171,8 +171,9 @@ public:
 
             // Create pinned memory buffers for matricies we will be accessing
             // multiple times
-            cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * matrix_a.size());
-            cudaMallocHost((void**) &h_matrix_c, sizeof( R ) * matrix_b.size());
+            cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n +
+                                                 sizeof( R ) * n * n);
+            h_matrix_c = (R*)(h_matrix_a + n * n);
 
             // Copy b to device using the pinned buffer we created for a
             // (needs to be done first since b is row-major)
@@ -207,7 +208,6 @@ public:
             cudaFree( &d_matrix_b );
             cudaFree( &d_matrix_c );
             cudaFreeHost( (void*) h_matrix_a );
-            cudaFreeHost( (void*) h_matrix_c );
         }
 
         get_results(title, time_sum/num_runs, num_runs);
