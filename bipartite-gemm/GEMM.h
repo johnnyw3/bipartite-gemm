@@ -73,6 +73,10 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     R* h_matrix_c;
 
     size_t c_size = sizeof( R ) * (n*n - n*superblock_sz*first_superblock);
+    size_t a_size = sizeof( I ) * (n*n - n*superblock_sz*first_superblock);
+
+    if (a_size == 0)
+        return;
 
     cudaStream_t streams[2];
     cudaStreamCreate(&streams[0]);
@@ -84,24 +88,24 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
 
     // Create pinned memory buffers for matricies we will be accessing
     // multiple times
-    cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * n * n + c_size);
-    h_matrix_c = (R*)(h_matrix_a + n * n);
+    cudaMallocHost((void**) &h_matrix_c, c_size);
+    h_matrix_a = (I*)((uint8_t*)h_matrix_c + c_size - a_size); 
 
     // Copy b to device using the pinned buffer we created for a
     // (needs to be done first since b is row-major)
-    memcpy(h_matrix_a, matrix_b,  sizeof( I ) * n * n);
-    cudaMemcpy( d_matrix_b, h_matrix_a,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
+    memcpy(h_matrix_c, matrix_b,  sizeof( I ) * n * n);
+    cudaMemcpy( d_matrix_b, h_matrix_c,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
 
     // Now we can actually use a's pinned buffer for a
-    memcpy(h_matrix_a, matrix_a,  sizeof( I ) * n * n);
+    memcpy(h_matrix_a, matrix_a + n*superblock_sz*first_superblock, a_size);
 
     assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
 
     // i+=2 because two superblocks are computed in separate streams concurrently
     for (std::size_t i = first_superblock; i < n/superblock_sz; i+=2)
     {
-      cudaMemcpyAsync( d_matrix_a, h_matrix_a+superblock_sz*i*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[0] );
-      cudaMemcpyAsync( d_matrix_a + superblock_sz*n, h_matrix_a+superblock_sz*(i+1)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[1] );
+      cudaMemcpyAsync( d_matrix_a, h_matrix_a+superblock_sz*(i-first_superblock)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[0] );
+      cudaMemcpyAsync( d_matrix_a + superblock_sz*n, h_matrix_a+superblock_sz*(i-first_superblock+1)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[1] );
 
       const dim3 blockDim { WARP_SZ * 4, 4, 1 };
       dim3 gridDim;
@@ -120,7 +124,7 @@ void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
     cudaFree( &d_matrix_a );
     cudaFree( &d_matrix_b );
     cudaFree( &d_matrix_c );
-    cudaFreeHost( (void*) h_matrix_a );
+    cudaFreeHost( (void*) h_matrix_c );
 
 }
 
