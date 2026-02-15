@@ -1,4 +1,5 @@
 CXXVERSION?=20
+INSTALL?=install
 
 CXXFLAGS=-O3 -std=c++$(CXXVERSION) -g -I.
 
@@ -28,6 +29,10 @@ build/bench: bench/main.cu bench/gemm_experiment.h bipartite-gemm/cuda_common.h 
 	OPENBLAS_NUM_THREADS=$(OPENBLAS_NUM_THREADS) nvcc -o build/bench bench/main.cu \
     -arch=$(TARGET) -DNUM_SMS=$(NUM_SMS) -DTEST_N=$(TEST_N) \
     -DTEST_MAX_ELEMENT=$(TEST_MAX_ELEMENT) $(CXXFLAGS)
+
+install:
+	$(INSTALL) -CD -m 644 bipartite-gemm/GEMM.h $(PREFIX)/usr/include/bipartite/GEMM.h
+	$(INSTALL) -CD -m 644 bipartite-gemm/cuda_common.h $(PREFIX)/usr/include/bipartite/cuda_common.h
 
 clean:
 	rm -f build/*

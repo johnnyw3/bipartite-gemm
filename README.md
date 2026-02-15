@@ -1,7 +1,14 @@
 # BipartiteGEMM
 
- High throughput data-parallel GEMM implementations in Cuda using Cuda cores and
- Tensor cores.
+**This repo is a continuation of the
+[TeamBipartite/bipartite](https://github.com/TeamBipartite/bipartite-gemm)
+project that I developed with a friend in 2024. The improvements here
+include improving performance, making it easier to use in other applications,
+and (coming soon) adding sparse matrix support.** There are no short-term plans
+to merge this into the original repo.
+
+High throughput data-parallel GEMM implementations in Cuda using Cuda cores and
+Tensor cores.
 
 # Prerequisites
 You should have a CUDA environment installed with a GPU of compute
@@ -52,9 +59,8 @@ library in `bench`:
 A clean is required before switching configurations.
 
 # Install & run
-Simply copy the `bipartite-gemm` directory to your system's `include`
-directory to install the library for use in other applications. The interface is
-provided within the `bipartite` namespace.
+Simply run `make install PREFIX=/your/sysroot/dir` to install the library for
+use in other applications. The interface is provided within the `bipartite` namespace.
 
 A `bench` executable is generated in the `build` directory for testing and verification purposes. 
 Simply run this file to both verify output correctness and benchmark

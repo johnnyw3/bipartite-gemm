@@ -35,7 +35,6 @@ public:
 
     const std::vector<I> matrix_b;
     I* d_matrix_b;
-    I* h_matrix_b;
 
     std::vector<R> matrix_c;
     R* d_matrix_c;
@@ -57,7 +56,6 @@ public:
                                                         d_matrix_b{nullptr},
                                                         d_matrix_c{nullptr},
                                                         h_matrix_a{nullptr},
-                                                        h_matrix_b{nullptr},
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{n},
                                                         streams{nullptr},
@@ -73,7 +71,6 @@ public:
                                                         d_matrix_b{nullptr},
                                                         d_matrix_c{nullptr},
                                                         h_matrix_a{nullptr},
-                                                        h_matrix_b{nullptr},
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{superblock_sz},
                                                         streams{std::vector<cudaStream_t>(2)},
@@ -90,8 +87,6 @@ public:
         if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
         if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
         if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
-        if (h_matrix_b != nullptr) cudaFree(h_matrix_b);
-        if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
     }
 
     void prepare_device(){
@@ -102,18 +97,31 @@ public:
         cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
         cudaMalloc( &d_matrix_c, sizeof( R ) * n * n );
  
-        // Copy contents of matrix_a and matrix_b to pinned memory
-        cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * matrix_a.size());
-        cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * matrix_b.size());
-        cudaMallocHost((void**) &h_matrix_b, sizeof( R ) * matrix_c.size());
-        memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
-        memcpy(h_matrix_b, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+        // Create pinned memory buffers for matricies we will be accessing
+        // multiple times 
+        size_t a_size = sizeof( I ) * matrix_a.size();
+        size_t c_size = sizeof( R ) * matrix_c.size();
+        size_t pinned_sz = (c_size > a_size) ? c_size : a_size;
+        cudaMallocHost((void**) &h_matrix_a, pinned_sz);
 
+        // Copy b to device using the pinned buffer we created for a 
+        // (needs to be done first since b is row-major)
+        memcpy(h_matrix_a, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+        cudaMemcpy( d_matrix_b, h_matrix_a,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+
+        // Now we can actually use a's pinned buffer for a
+        memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
         cudaMemcpy( d_matrix_a, h_matrix_a, sizeof( I ) * matrix_a.size(), cudaMemcpyHostToDevice );
-        cudaMemcpy( d_matrix_b, h_matrix_b, sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
 
         // Set contents of matrix_c to zero on device
         cudaMemset(d_matrix_c, 0x0, sizeof(R) * matrix_c.size() );
+    }
+
+    void unprepare_device(){
+        if (d_matrix_a != nullptr) cudaFree(d_matrix_a);
+        if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
+        if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
+        if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
     }
 
     void get_product_from_device(){
@@ -141,7 +149,9 @@ public:
             cudaDeviceSynchronize();
             get_product_from_device();
             auto const end = std::chrono::high_resolution_clock::now();
+
             time_sum += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            unprepare_device();
         }
 
         get_results(title, time_sum/num_runs, num_runs);
@@ -159,15 +169,21 @@ public:
             cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
             cudaMalloc( &d_matrix_c, sizeof( R ) * 2 * superblock_sz * n);
 
-            // Copy contents of matrix_a and matrix_b to pinned memory
-            cudaMallocHost((void**) &h_matrix_a, sizeof( I ) * matrix_a.size());
-            cudaMallocHost((void**) &h_matrix_b, sizeof( I ) * matrix_b.size());
-            cudaMallocHost((void**) &h_matrix_c, sizeof( R ) * matrix_b.size());
-            memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
-            memcpy(h_matrix_b, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+            // Create pinned memory buffers for matricies we will be accessing
+            // multiple times
+            size_t a_size = sizeof( I ) * matrix_a.size();
+            size_t c_size = sizeof( R ) * matrix_c.size();
+            size_t pinned_sz = (c_size > a_size) ? c_size : a_size;
+            cudaMallocHost((void**) &h_matrix_c, pinned_sz);
+            h_matrix_a = (I*)((uint8_t*)h_matrix_c + c_size - a_size); 
 
-            // Copy b to device (needs to be done first since b is row-major)
-            cudaMemcpy( d_matrix_b, h_matrix_b,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+            // Copy b to device using the pinned buffer we created for a
+            // (needs to be done first since b is row-major)
+            memcpy(h_matrix_c, matrix_b.data(),  sizeof( I ) * matrix_b.size());
+            cudaMemcpy( d_matrix_b, h_matrix_c,  sizeof( I ) * matrix_b.size(), cudaMemcpyHostToDevice );
+
+            // Now we can actually use a's pinned buffer for a
+            memcpy(h_matrix_a, matrix_a.data(),  sizeof( I ) * matrix_a.size());
 
             assert( n * n == matrix_a.size() && "GemmExperiment need to be of size n x n" );
             assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
@@ -189,6 +205,11 @@ public:
             memcpy(matrix_c.data(), h_matrix_c,  sizeof( R ) * matrix_c.size());
             auto const end = std::chrono::high_resolution_clock::now();
             time_sum += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+            cudaFree( &d_matrix_a );
+            cudaFree( &d_matrix_b );
+            cudaFree( &d_matrix_c );
+            cudaFreeHost( (void*) h_matrix_c );
         }
 
         get_results(title, time_sum/num_runs, num_runs);

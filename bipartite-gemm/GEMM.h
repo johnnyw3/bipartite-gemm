@@ -1,5 +1,7 @@
 #include <cstddef>
+#include <cassert>
 #include <mma.h>
+#include <stdint.h>
 
 #define WARP_SZ 32
 #define WMMA_M  16
@@ -11,9 +13,13 @@ using namespace nvcuda;
 namespace bipartite{
 namespace tensorcores{
 
+
 /** gemm
-  * @brief perform a gemm on two matricies of type I using tensor wmma
+  * @brief perform a gemm on two matricies (A*B) of type I using tensor wmma
   *        instructions, saving the results in the type R matrix
+  * @param matrix_a - a pointer to the A matrix in device memory
+  * @param matrix_b - a pointer to the B matrix in device memory
+  * @param res - a pointer to an area of device memory to store the results
   * @pre matrix_a, matrix_b, and res are n x n matricies
   */
 template<typename I, typename R>
@@ -51,6 +57,75 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
     }
 
     wmma::store_matrix_sync(res + c_row * n + c_col, acc, n, wmma::mem_row_major);
+}
+
+/** gemm_wrapper
+  * @brief High-level interinterface for gemm designed to be called from general-purpose code
+  */
+template<typename I, typename R>
+void gemm_wrapper(I *matrix_a, I *matrix_b, R *res, std::size_t n,
+                  std::size_t superblock_sz=0, std::size_t first_superblock=0)
+{
+    I* d_matrix_a;
+    I* h_matrix_a;
+    I* d_matrix_b;
+    R* d_matrix_c;
+    R* h_matrix_c;
+
+    size_t c_size = sizeof( R ) * (n*n - n*superblock_sz*first_superblock);
+    size_t a_size = sizeof( I ) * (n*n - n*superblock_sz*first_superblock);
+
+    if (a_size == 0)
+        return;
+
+    cudaStream_t streams[2];
+    cudaStreamCreate(&streams[0]);
+    cudaStreamCreate(&streams[1]);
+
+    cudaMalloc( &d_matrix_a, sizeof( I ) * 2 * superblock_sz * n );
+    cudaMalloc( &d_matrix_b, sizeof( I ) * n * n );
+    cudaMalloc( &d_matrix_c, sizeof( R ) * 2 * superblock_sz * n);
+
+    // Create pinned memory buffers for matricies we will be accessing
+    // multiple times
+    cudaMallocHost((void**) &h_matrix_c, c_size);
+    h_matrix_a = (I*)((uint8_t*)h_matrix_c + c_size - a_size); 
+
+    // Copy b to device using the pinned buffer we created for a
+    // (needs to be done first since b is row-major)
+    memcpy(h_matrix_c, matrix_b,  sizeof( I ) * n * n);
+    cudaMemcpy( d_matrix_b, h_matrix_c,  sizeof( I ) * n * n, cudaMemcpyHostToDevice );
+
+    // Now we can actually use a's pinned buffer for a
+    memcpy(h_matrix_a, matrix_a + n*superblock_sz*first_superblock, a_size);
+
+    assert( n % superblock_sz ==0 && "superblock_sz must be a factor of n" );
+
+    // i+=2 because two superblocks are computed in separate streams concurrently
+    for (std::size_t i = first_superblock; i < n/superblock_sz; i+=2)
+    {
+      cudaMemcpyAsync( d_matrix_a, h_matrix_a+superblock_sz*(i-first_superblock)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[0] );
+      cudaMemcpyAsync( d_matrix_a + superblock_sz*n, h_matrix_a+superblock_sz*(i-first_superblock+1)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[1] );
+
+      const dim3 blockDim { WARP_SZ * 4, 4, 1 };
+      dim3 gridDim;
+      gridDim.x = (n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
+      gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
+      gemm<I, R><<< gridDim, blockDim, 0, streams[0] >>>(d_matrix_a, d_matrix_b, d_matrix_c, n, superblock_sz);
+      gemm<I, R><<< gridDim, blockDim, 0, streams[1] >>>(d_matrix_a+superblock_sz*n, d_matrix_b, d_matrix_c+superblock_sz*n, n, superblock_sz);
+
+      cudaMemcpyAsync(  h_matrix_c + superblock_sz*(i-first_superblock)*n, d_matrix_c, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[0] );
+      cudaMemcpyAsync(  h_matrix_c + superblock_sz*(i-first_superblock+1)*n, d_matrix_c + superblock_sz*n, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[1] );
+    }
+
+    cudaDeviceSynchronize();
+    memcpy(res+n*superblock_sz*first_superblock, h_matrix_c,  c_size );
+
+    cudaFree( &d_matrix_a );
+    cudaFree( &d_matrix_b );
+    cudaFree( &d_matrix_c );
+    cudaFreeHost( (void*) h_matrix_c );
+
 }
 
 } // namespace tensorcores
