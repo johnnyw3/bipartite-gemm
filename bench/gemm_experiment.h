@@ -86,7 +86,7 @@ public:
         if (d_matrix_a != nullptr) cudaFree(d_matrix_a);
         if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
         if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
-        if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
+        if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
     }
 
     void prepare_device(){
@@ -121,7 +121,7 @@ public:
         if (d_matrix_a != nullptr) cudaFree(d_matrix_a);
         if (d_matrix_b != nullptr) cudaFree(d_matrix_b);
         if (d_matrix_c != nullptr) cudaFree(d_matrix_c);
-        if (h_matrix_c != nullptr) cudaFree(h_matrix_c);
+        if (h_matrix_a != nullptr) cudaFree(h_matrix_a);
     }
 
     void get_product_from_device(){
