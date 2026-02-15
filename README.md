@@ -1,7 +1,7 @@
 # BipartiteGEMM
 
 **This repo is a continuation of the
-[team-bipartite/bipartite](https://github.com/TeamBipartite/bipartite-gemm)
+[TeamBipartite/bipartite](https://github.com/TeamBipartite/bipartite-gemm)
 project that I developed with a friend in 2024. The improvements here
 include improving performance, making it easier to use in other applications,
 and (coming soon) adding sparse matrix support.** There are no short-term plans
