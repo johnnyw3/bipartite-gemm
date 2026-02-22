@@ -13,6 +13,9 @@ using namespace nvcuda;
 namespace bipartite{
 namespace tensorcores{
 
+extern "C" __device__ void gemm_helper(uint64_t matrix_a, uint64_t matrix_b,
+                                       uint64_t out_addr, uint64_t a_row,
+                                       uint64_t b_col, uint32_t n);
 
 /** gemm
   * @brief perform a gemm on two matricies (A*B) of type I using tensor wmma
@@ -25,6 +28,44 @@ namespace tensorcores{
 template<typename I, typename R>
 __global__
 void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superblock_sz=0)
+{
+
+    // Note that threadblocks are a 4x4 2D grid of warps
+    std::size_t a_col = 0; 
+    const std::size_t a_row = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_K;
+
+    const std::size_t b_col = ((blockIdx.x * blockDim.x + threadIdx.x) / WARP_SZ) * WMMA_K;
+    std::size_t b_row = 0;
+
+    const std::size_t c_col = ((blockIdx.x * blockDim.x + threadIdx.x) / WARP_SZ) * WMMA_M;
+    const std::size_t c_row = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
+
+    // Safe as this will be consistent for an entire kernel launch
+    const std::size_t num_rows = (superblock_sz) ? superblock_sz : n; 
+
+    if (a_row >= num_rows || b_col >= n) return;
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_K, WMMA_N, I, wmma::row_major> afrag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_K, WMMA_N, I, wmma::row_major> bfrag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_K, WMMA_N, R> acc;
+    wmma::fill_fragment(acc, R(0));
+
+    for (std::size_t k = 0; k < n; k += WMMA_K)
+    {
+        a_col = k;
+        b_row = k;
+        wmma::load_matrix_sync(afrag, matrix_a + a_row * n + a_col, n);
+        wmma::load_matrix_sync(bfrag, matrix_b + b_row * n + b_col, n);
+        wmma::mma_sync(acc, afrag, bfrag, acc);
+    }
+
+    wmma::store_matrix_sync(res + c_row * n + c_col, acc, n, wmma::mem_row_major);
+}
+
+/* 2:4 sparsity SpMM */
+template<typename I, typename R>
+__global__
+void spmm_24(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superblock_sz=0)
 {
 
     // Note that threadblocks are a 4x4 2D grid of warps
