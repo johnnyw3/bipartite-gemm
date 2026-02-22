@@ -1,0 +1,20 @@
+.version 8.5
+.target sm_86
+.address_size 64
+
+.func gemm_helper(.param .u64 matrix_a, .param .u64 matrix_b, .param .u64 out_addr, 
+                  .param .u64 a_row, .param .u64 b_col, .param .u32 n)
+{
+    .reg .u64   ap, bp, a_row_reg, b_col_reg;
+    .reg .u32   n_reg;
+    .reg .f16x2 af<8>, bf<8>, acc<8>;
+    
+    ld.param.u64 ap, [matrix_a];
+    ld.param.u64 bp, [matrix_b];
+    ld.param.u64 a_row_reg, [a_row];
+    ld.param.u64 b_col_reg, [b_col];
+    ld.param.u32 n_reg, [n];
+
+    wmma.load.a.sync.aligned.row.m16n16k16.f16 {af0, af1, af2, af3, af4, af5, af6, af7}, [ap], n_reg;
+    wmma.load.b.sync.aligned.row.m16n16k16.f16 {bf0, bf1, bf2, bf3, bf4, bf5, bf6, bf7}, [bp], n_reg;
+}
