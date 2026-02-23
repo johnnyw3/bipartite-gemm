@@ -77,6 +77,8 @@ int main(int argc, char **argv)
             gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim, 0, stream >>>(a, b, c, padded_n, superblock_sz);
             }, "Tensor Core GEMM FP32 (two streams) Implementation", 10 );
+
+    return 0;
     /*
     **********************************
     * Tensor Core FP16 GEMM Experiment
