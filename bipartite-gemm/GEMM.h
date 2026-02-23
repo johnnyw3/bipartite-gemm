@@ -45,6 +45,8 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
 
     if (a_row >= num_rows || b_col >= n) return;
 
+    gemm_helper((uint64_t)matrix_a, (uint64_t)matrix_b, (uint64_t)(res + c_row * n + c_col), (uint64_t)a_row, (uint64_t)b_col, (uint32_t) n);
+/*
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_K, WMMA_N, I, wmma::row_major> afrag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_K, WMMA_N, I, wmma::row_major> bfrag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_K, WMMA_N, R> acc;
@@ -60,6 +62,7 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
     }
 
     wmma::store_matrix_sync(res + c_row * n + c_col, acc, n, wmma::mem_row_major);
+*/
 }
 
 /* 2:4 sparsity SpMM */
