@@ -36,8 +36,6 @@
     mov.f32 acc7, 0.0;
 
 loop:
-    setp.ge.u32 p, k, n_reg;
-    @p bra.uni done;
     wmma.load.a.sync.aligned.row.m16n16k16.f16 {af0, af1, af2, af3, af4, af5, af6, af7}, [ap], n_reg;
     wmma.load.b.sync.aligned.row.m16n16k16.f16 {bf0, bf1, bf2, bf3, bf4, bf5, bf6, bf7}, [bp], n_reg;
     wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32 {acc0, acc1, acc2, acc3, acc4, acc5, acc6, acc7},
@@ -47,9 +45,65 @@ loop:
     add.u64 ap, ap, 32; // 16 elements * 2 bytes
     add.u64 bp, bp, n_64; 
     add.u32 k, k, 16;
-    bra.uni loop;
+    setp.lt.u32 p, k, n_reg;
+    @p bra.uni loop;
     
 done:
     wmma.store.d.sync.aligned.row.m16n16k16.f32 [cp], {acc0, acc1, acc2, acc3, acc4, acc5, acc6, acc7},
                                                 n_reg;
+}
+
+.visible .func gemm_helper_mma(.param .u64 matrix_a, .param .u64 matrix_b, .param .u64 out_addr, 
+                               .param .u32 n)
+{
+    .reg .u64   ap, bp, cp, n_64, n_642;
+    .reg .u32   k, n_reg;
+    .reg .pred  p;
+    .reg .f16x2 af<4>, bf<2>;
+    .reg .f32   acc<4>;
+    
+    ld.param.u64 ap, [matrix_a];
+    ld.param.u64 bp, [matrix_b];
+    ld.param.u64 cp, [out_addr];
+    ld.param.u32 n_reg, [n];
+    cvt.u64.u32 n_64, n_reg;
+    mov.u64 n_642, n_64;
+    mul.lo.u64 n_64, n_64, 32; // 16 elements * 2 bytes/element
+    mul.lo.u64 n_642, n_642, 32; // 8 elements * 4 bytes/element
+
+    mov.u32 k, 0;
+    mov.f32 acc0, 0.0;
+    mov.f32 acc1, 0.0;
+    mov.f32 acc2, 0.0;
+    mov.f32 acc3, 0.0;
+
+loop:
+    ldmatrix.sync.aligned.m8n8.x4.b16 {af0, af1, af2, af3}, [ap];
+    ldmatrix.sync.aligned.m8n8.x2.b16 {bf0, bf1}, [bp];
+    mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {acc0, acc1, acc2, acc3},
+                                                      {af0, af1, af2, af3},
+                                                      {bf0, bf1},
+                                                      {acc0, acc1, acc2, acc3};
+
+    add.u64 ap, ap, 512; // 16 elements (frag x) * 16 elements (frag y) * 2 bytes/element
+    add.u64 bp, bp, n_64; 
+    add.u32 k, k, 16;
+    setp.lt.u32 p, k, n_reg;
+    @p bra.uni loop;
+    
+done:
+    // hardcoded for testing
+    //mov.f32 acc0, 1.0;
+    //mov.f32 acc1, 2.0;
+    //mov.f32 acc2, 3.0;
+    //mov.f32 acc3, 4.0;
+
+    st.global.f32 [cp], acc0;
+    add.u64 cp, cp, 4;
+    st.global.f32 [cp], acc1;
+    add.u64 cp, cp, n_642; // just a coincidence this works out, will need to modify if types change
+    st.global.f32 [cp], acc3;
+    sub.u64 cp, cp, 4;
+    st.global.f32 [cp], acc2;
+
 }

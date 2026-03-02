@@ -59,8 +59,9 @@ int main(int argc, char **argv)
             gridDim.x = (tensorCoreExpFp32.get_n() + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (tensorCoreExpFp32.get_n() + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim >>>(a, b, c, tensorCoreExpFp32.get_n());
-            }, "Tensor Core GEMM FP32 Implementation", 10 );
+            }, "Tensor Core GEMM FP32 Implementation", 1 );
 
+    return 0;
     /*
     **********************************
     * Tensor Core FP32 (multi-stream) GEMM Experiment
@@ -76,9 +77,8 @@ int main(int argc, char **argv)
             gridDim.x = (padded_n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim, 0, stream >>>(a, b, c, padded_n, superblock_sz);
-            }, "Tensor Core GEMM FP32 (two streams) Implementation", 10 );
+            }, "Tensor Core GEMM FP32 (two streams) Implementation", 1 );
 
-    return 0;
     /*
     **********************************
     * Tensor Core FP16 GEMM Experiment
