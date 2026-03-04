@@ -54,7 +54,7 @@ int main(int argc, char **argv)
     GemmExperiment<half, float> tensorCoreExpFp32{TEST_N, TEST_MAX_ELEMENT, multiple, seed, print_result};
     tensorCoreExpFp32.run_experiment(
         [&tensorCoreExpFp32] (half* a, half* b, float* c) {
-            const dim3 blockDim { WARP_SZ * 4, 4, 1 };
+            const dim3 blockDim { WARP_SZ * 8, 4, 1 };
             dim3 gridDim;
             gridDim.x = (tensorCoreExpFp32.get_n() + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (tensorCoreExpFp32.get_n() + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);

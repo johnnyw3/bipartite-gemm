@@ -299,7 +299,17 @@ private:
                 int val_int = distribution(rng);
                 val = (T)val_int;
             }
-            matrix.push_back( val );
+            if (!seed)
+                matrix.push_back((T)1);
+            else if (seed == 1)
+            {
+                if (row == 16 && col < 4)
+                    matrix.push_back((T)1);
+                else
+                    matrix.push_back((T)0);
+            }
+            else
+                matrix.push_back( val );
         }
 
         return matrix;

@@ -1,7 +1,7 @@
 CXXVERSION?=20
 INSTALL?=install
 
-CXXFLAGS=-O0 -std=c++$(CXXVERSION) -g -I.
+CXXFLAGS=-O3 -std=c++$(CXXVERSION) -g -I.
 
 ifeq ($(USE_OPENBLAS),no)
 CXXFLAGS+= -DNO_OPENBLAS

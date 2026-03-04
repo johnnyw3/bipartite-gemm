@@ -43,7 +43,7 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
     __shared__ I smem_b[128*WMMA_N*8];
 
     // Safe as this will be consistent for an entire kernel launch
-    const std::size_t num_rows = (superblock_sz) ? superblock_sz : n; 
+    const std::size_t num_rows = (superblock_sz) ? superblock_sz : 128; 
 
     // Calculate thread ID and total threads in block
     const std::size_t tid = threadIdx.y * blockDim.x + threadIdx.x;
@@ -59,7 +59,7 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
     // Pack A matrix data into 16x16 blocks stored sequentially
     // A: (WMMA_M*4) rows x n cols = 64 rows x n cols
     const std::size_t num_blocks_a_row = num_a_rows / BLOCK_SIZE_A;  // 4 blocks vertically
-    const std::size_t num_blocks_a_col = n / BLOCK_SIZE_A;           // n/16 blocks horizontally
+    const std::size_t num_blocks_a_col = 128 / BLOCK_SIZE_A;           // n/16 blocks horizontally
     const std::size_t total_a_blocks = num_blocks_a_row * num_blocks_a_col;
     
     for (std::size_t block_idx = tid; block_idx < total_a_blocks; block_idx += num_threads)
@@ -77,11 +77,10 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
                 std::size_t smem_idx = block_idx * BLOCK_SIZE_A * BLOCK_SIZE_A + i * BLOCK_SIZE_A + j;
                 
                 if (gmem_row < num_rows && gmem_col < n)
-                    if (i > 3)
-                    smem_a[smem_idx] = 1;//matrix_a[gmem_row * n + gmem_col];
-                    else
-                    smem_a[smem_idx] = 0;
-                else
+                {
+                    //if (i == 2 && j  == 1 && block_col < 2)
+                    smem_a[smem_idx] = matrix_a[gmem_row * n + gmem_col];
+                }else
                     smem_a[smem_idx] = I(0);
             }
         }
@@ -89,7 +88,7 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
 
     // Pack B matrix data into 8x8 blocks stored sequentially (transposed)
     // B: n rows x (WMMA_N*4) cols = n rows x 64 cols -> transposed to 64 rows x n cols
-    const std::size_t num_blocks_b_row = n / BLOCK_SIZE_B;            // n/8 blocks vertically
+    const std::size_t num_blocks_b_row = 128 / BLOCK_SIZE_B;            // n/8 blocks vertically
     const std::size_t num_blocks_b_col = num_b_cols / BLOCK_SIZE_B;  // 8 blocks horizontally
     const std::size_t total_b_blocks = num_blocks_b_row * num_blocks_b_col;
     
@@ -111,15 +110,24 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
                 //if (block_idx== 0 && tid  == 0)
                 //printf("bidx %d bidy %d tid %ld bid %ld i %ld j %ld smem_idx: %ld, max %d\n", blockIdx.x, blockIdx.y, tid, block_idx, i, j, smem_idx, 4*256*WMMA_M);
                 if (gmem_row < n && gmem_col < n)
-                    smem_b[smem_idx] = 1;//matrix_b[gmem_row * n + gmem_col];
+                    //if (j == 1 )
+
+                    //if (block_row == 2 && i == 0 && j < 4)
+                    smem_b[smem_idx] = matrix_b[gmem_row * n + gmem_col];
+                    //else
+                    //smem_b[smem_idx] = 0;
                 else
                     smem_b[smem_idx] = I(0);
+                //if (j > 3)
+                //    smem_b[smem_idx] = 1; //I(0);
+                //else
+                //    smem_b[smem_idx] = I(0);
+                    
             }
         }
     }
 
     __syncthreads();
-
 
     // Note that threadblocks are a 4x8 2D grid of warps
     std::size_t a_col = 0; 
@@ -136,21 +144,21 @@ void gemm(I *matrix_a, I *matrix_b, R *res, std::size_t n, std::size_t superbloc
 
     //if (a_row >= num_rows || b_col >= n) return;
 
-    I *ap = smem_a + a_row * n;
-    ap += (threadIdx.x % WARP_SZ > 15) ? ( ((threadIdx.x % WARP_SZ) - 16) * BLOCK_SIZE_A + BLOCK_SIZE_A) : ((threadIdx.x % WARP_SZ)  * BLOCK_SIZE_A);
+    I *ap = smem_a + a_row * 128;
+    ap += (threadIdx.x % WARP_SZ > 15) ? ( ((threadIdx.x % WARP_SZ) - 16) * BLOCK_SIZE_A + 8) : ((threadIdx.x % WARP_SZ)  * BLOCK_SIZE_A);
     //(warp_x / WMMA_M) * BLOCK_SIZE_A * BLOCK_SIZE_A + (warp_x % WMMA_M) * BLOCK_SIZE_A;
     // B matrix needs to be transposed before we want finish this...
-    I *bp = smem_b;// + b_col;
-    if (tid == 0)
-    {
-        for (int idx = 0; idx < 128*WMMA_N*8; ++idx)
-            printf("%f ", (float)smem_b[idx]);
-    }
-    //bp += (threadIdx.x % WARP_SZ > 7) ? ( ((threadIdx.x % WARP_SZ) - 8) * BLOCK_SIZE_B + BLOCK_SIZE_B * n) : ((threadIdx.x % WARP_SZ) * BLOCK_SIZE_B);
+    I *bp = smem_b + b_col * BLOCK_SIZE_B;
+    //if (tid == 0)
+    //{
+    //    for (int idx = 0; idx < 128*WMMA_N*8; ++idx)
+    //        printf("%f ", (float)smem_b[idx]);
+    //}
+    bp += (threadIdx.x % WARP_SZ > 7) ? ( ((threadIdx.x % WARP_SZ) - 8) * BLOCK_SIZE_B + BLOCK_SIZE_B * 64) : ((threadIdx.x % WARP_SZ) * BLOCK_SIZE_B);
     //+ (warp_x / WMMA_N) * BLOCK_SIZE_B * BLOCK_SIZE_B + (warp_x % WMMA_N) * BLOCK_SIZE_B;
-    R *cp = res + (c_row + (threadIdx.x % 32) / 4) * n + (c_col + (threadIdx.x % 4)*2);
+    R *cp = res + (c_row + (threadIdx.x % 32) / 4) * 128 + (c_col + (threadIdx.x % 4)*2);
     //R *cp = res;
-    gemm_helper_mma((uint64_t)ap, (uint64_t)bp, (uint64_t)cp, (uint32_t) n);
+    gemm_helper_mma((uint64_t)ap, (uint64_t)bp, (uint64_t)cp, (uint32_t) 128);
     //*res= 2.0;
 #if 0 
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_K, WMMA_N, I, wmma::row_major> afrag;

@@ -68,7 +68,7 @@ done:
     ld.param.u32 n_reg, [n];
     cvt.u64.u32 n_64, n_reg;
     mov.u64 n_642, n_64;
-    mul.lo.u64 n_64, n_64, 32; // 16 elements * 2 bytes/element
+    mul.lo.u64 n_64, 1024, 2; // 16 elements * 2 bytes/element
     mul.lo.u64 n_642, n_642, 32; // 8 elements * 4 bytes/element
 
     mov.u32 k, 0;
