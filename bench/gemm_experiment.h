@@ -11,6 +11,8 @@
 #include <cblas.h>
 #endif
 
+#include "bench/sparse_utils.h"
+
 #if __cplusplus >= 202002L
 #define CXX20
 #endif
@@ -29,11 +31,13 @@ public:
     // Member Variables
     const std::size_t n;
 
-    const std::vector<I> matrix_a;
+    //const std::vector<I> matrix_a;
+    std::vector<I> matrix_a;
     I* d_matrix_a;
     I* h_matrix_a;
 
-    const std::vector<I> matrix_b;
+    //const std::vector<I> matrix_b;
+    std::vector<I> matrix_b;
     I* d_matrix_b;
 
     std::vector<R> matrix_c;
@@ -44,6 +48,11 @@ public:
 
     const std::size_t superblock_sz;
     std::vector<cudaStream_t> streams;
+
+    // Sparse matrix support (2:4 sparsity)
+    bool is_sparse;
+    std::vector<I> matrix_b_compressed;   // compressed B (non-zero values), type I (half)
+    std::vector<int> matrix_b_indices;    // packed index matrix
 
 
     // Member Functions
@@ -59,6 +68,7 @@ public:
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{n},
                                                         streams{nullptr},
+                                                        is_sparse{false},
                                                         fixed_seed{seed},
                                                         print_result{print_result} {}
 
@@ -74,12 +84,88 @@ public:
                                                         h_matrix_c{nullptr},
                                                         superblock_sz{superblock_sz},
                                                         streams{std::vector<cudaStream_t>(2)},
+                                                        is_sparse{false},
                                                         fixed_seed{seed},
                                                         print_result{print_result} 
      {
 
          cudaStreamCreate(&streams[0]);
          cudaStreamCreate(&streams[1]);
+     }
+
+    // Constructor for file-loaded matrices with 2:4 sparse B
+    // Reads A and B from files, compresses B using 2:4 sparsity (n_blk=2, m=4, l=1),
+    // and creates the packed index matrix.
+    GemmExperiment( const char *file_a, const char *file_b, std::size_t multiple, bool print_result ):
+                                                        n{[&]() -> std::size_t {
+                                                            int n_raw;
+                                                            float *tmp;
+                                                            read_mat(file_a, &n_raw, &tmp);
+                                                            free(tmp);
+                                                            return get_padded_sz(n_raw, multiple);
+                                                        }()},
+                                                        matrix_a{},
+                                                        matrix_b{},
+                                                        matrix_c{std::vector<R>(n*n, R(0))},
+                                                        d_matrix_a{nullptr},
+                                                        d_matrix_b{nullptr},
+                                                        d_matrix_c{nullptr},
+                                                        h_matrix_a{nullptr},
+                                                        h_matrix_c{nullptr},
+                                                        superblock_sz{n},
+                                                        streams{nullptr},
+                                                        is_sparse{true},
+                                                        fixed_seed{0},
+                                                        print_result{print_result}
+     {
+         constexpr int n_blk = 2, m = 4, l = 1;
+
+         // Read matrices from files
+         int n_a, n_b;
+         float *raw_a, *raw_b;
+         read_mat(file_a, &n_a, &raw_a);
+         read_mat(file_b, &n_b, &raw_b);
+
+         // Convert A from float to I (half) with padding
+         const_cast<std::vector<I>&>(matrix_a).resize(n * n, I(0));
+         for (int row = 0; row < n_a; ++row)
+             for (int col = 0; col < n_a; ++col)
+                 const_cast<std::vector<I>&>(matrix_a)[row * n + col] = (I)raw_a[row * n_a + col];
+
+         // Store original B (float->half) for verification
+         const_cast<std::vector<I>&>(matrix_b).resize(n * n, I(0));
+         for (int row = 0; row < n_b; ++row)
+             for (int col = 0; col < n_b; ++col)
+                 const_cast<std::vector<I>&>(matrix_b)[row * n + col] = (I)raw_b[row * n_b + col];
+
+         // Compress B using 2:4 sparsity
+         std::size_t compressed_cols = (std::size_t)n_b * n_blk / m;
+         float *mat_b_compressed_f = (float*)aligned_alloc(64, sizeof(float) * n_b * compressed_cols);
+         int *idx_mat = (int*)aligned_alloc(64, sizeof(int) * n_b * compressed_cols);
+         memset(mat_b_compressed_f, 0, sizeof(float) * n_b * compressed_cols);
+         memset(idx_mat, 0, sizeof(int) * n_b * compressed_cols);
+
+         squash_matrix(raw_b, mat_b_compressed_f, idx_mat, n_blk, m, l, n_b);
+         cpu_transpose(mat_b_compressed_f, n_b, (int)compressed_cols);
+         cpu_transpose(idx_mat, n_b / l, (int)compressed_cols);
+         pack_mat(idx_mat, (int)compressed_cols, n_b / l);
+
+         // Convert compressed B from float to I (half)
+         std::size_t compressed_size = compressed_cols * n_b;
+         matrix_b_compressed.resize(compressed_size);
+         for (std::size_t i = 0; i < compressed_size; ++i)
+             matrix_b_compressed[i] = (I)mat_b_compressed_f[i];
+
+         // Store packed index matrix
+         std::size_t packed_cols = compressed_cols / 16;
+         std::size_t idx_size = packed_cols * (n_b / l);
+         matrix_b_indices.resize(idx_size);
+         memcpy(matrix_b_indices.data(), idx_mat, sizeof(int) * idx_size);
+
+         free(raw_a);
+         free(raw_b);
+         free(mat_b_compressed_f);
+         free(idx_mat);
      }
     
     ~GemmExperiment(){
@@ -136,7 +222,7 @@ public:
         return superblock_sz;
     }
 
-    void run_experiment( std::function<void(I*, I*, R*)> kernel_wrapper, std::string title, int num_runs=1)
+    void run_experiment( std::function<void(I*, I*, R*)> kernel_wrapper, std::string title, int num_runs=1, std::size_t tile_size=0)
     {
         assert( num_runs && "Cannot call run_experiment with 0 runs." );
 
@@ -145,8 +231,22 @@ public:
         {
             auto const start = std::chrono::high_resolution_clock::now();
             prepare_device();
-            kernel_wrapper(d_matrix_a, d_matrix_b, d_matrix_c);
-            cudaDeviceSynchronize();
+
+            if (tile_size > 0) {
+                assert( n % tile_size == 0 && "n must be a multiple of tile_size" );
+                for (std::size_t k_tile = 0; k_tile < n; k_tile += tile_size) {
+                    kernel_wrapper(
+                        d_matrix_a + k_tile,
+                        d_matrix_b + k_tile * n,
+                        d_matrix_c
+                    );
+                    //cudaDeviceSynchronize();
+                }
+            } else {
+                kernel_wrapper(d_matrix_a, d_matrix_b, d_matrix_c);
+                cudaDeviceSynchronize();
+            }
+
             get_product_from_device();
             auto const end = std::chrono::high_resolution_clock::now();
 
@@ -157,7 +257,7 @@ public:
         get_results(title, time_sum/num_runs, num_runs);
     }
 
-    void run_experiment_streams( std::function<void(I*, I*, R*, cudaStream_t)> kernel_wrapper, std::string title, int num_runs=1)
+    void run_experiment_streams( std::function<void(I*, I*, R*, cudaStream_t)> kernel_wrapper, std::string title, int num_runs=1, std::size_t tile_size=0)
     {
         assert( num_runs && "Cannot call run_experiment with 0 runs.");
 
@@ -194,8 +294,17 @@ public:
               cudaMemcpyAsync( d_matrix_a, h_matrix_a+superblock_sz*i*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[0] );
               cudaMemcpyAsync( d_matrix_a + superblock_sz*n, h_matrix_a+superblock_sz*(i+1)*n, sizeof( I ) * superblock_sz*n, cudaMemcpyHostToDevice, streams[1] );
 
-              kernel_wrapper(d_matrix_a, d_matrix_b, d_matrix_c, streams[0]);
-              kernel_wrapper(d_matrix_a+superblock_sz*n, d_matrix_b, d_matrix_c+superblock_sz*n, streams[1]);
+              if (tile_size > 0) {
+                  assert( n % tile_size == 0 && "n must be a multiple of tile_size" );
+                  for (std::size_t k_tile = 0; k_tile < n; k_tile += tile_size) {
+                      kernel_wrapper(d_matrix_a + k_tile, d_matrix_b + k_tile * n, d_matrix_c, streams[0]);
+                      kernel_wrapper(d_matrix_a + superblock_sz*n + k_tile, d_matrix_b + k_tile * n, d_matrix_c + superblock_sz*n, streams[1]);
+                    cudaDeviceSynchronize();
+                  }
+              } else {
+                  kernel_wrapper(d_matrix_a, d_matrix_b, d_matrix_c, streams[0]);
+                  kernel_wrapper(d_matrix_a+superblock_sz*n, d_matrix_b, d_matrix_c+superblock_sz*n, streams[1]);
+              }
 
               cudaMemcpyAsync(  h_matrix_c + superblock_sz*i*n, d_matrix_c, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[0] );
               cudaMemcpyAsync(  h_matrix_c + superblock_sz*(i+1)*n, d_matrix_c + superblock_sz*n, sizeof( R ) * superblock_sz*n, cudaMemcpyDeviceToHost, streams[1] );
@@ -210,6 +319,76 @@ public:
             cudaFree( &d_matrix_b );
             cudaFree( &d_matrix_c );
             cudaFreeHost( (void*) h_matrix_c );
+        }
+
+        get_results(title, time_sum/num_runs, num_runs);
+    }
+
+    void run_experiment_sparse(
+        std::function<void(I*, I*, R*, uint32_t*, std::size_t)> kernel_wrapper,
+        std::string title, int num_runs=1, std::size_t tile_size=0)
+    {
+        assert(is_sparse && "run_experiment_sparse requires sparse data");
+        assert(num_runs && "Cannot call run_experiment_sparse with 0 runs.");
+
+        // Transpose matrix_a (n×n row-major → column-major for kernel's matrix_b param)
+        std::vector<I> matrix_a_t(n * n);
+        for (std::size_t r = 0; r < n; ++r)
+            for (std::size_t c = 0; c < n; ++c)
+                matrix_a_t[c * n + r] = matrix_a[r * n + c];
+
+        // Transpose matrix_b_compressed for kernel's matrix_a param (sparse operand)
+        // matrix_b_compressed: n rows × (n/2) cols → (n/2) rows × n cols
+        std::size_t b_comp_cols = matrix_b_compressed.size() / n;
+        std::vector<I> matrix_b_comp_t(matrix_b_compressed.size());
+        for (std::size_t r = 0; r < n; ++r)
+            for (std::size_t c = 0; c < b_comp_cols; ++c)
+                matrix_b_comp_t[c * n + r] = matrix_b_compressed[r * b_comp_cols + c];
+
+        I* d_sparse_a;      // compressed B (transposed) → kernel's matrix_a
+        I* d_dense_b;       // A (transposed) → kernel's matrix_b
+        R* d_res;
+        uint32_t* d_idx;
+
+        std::size_t time_sum = 0;
+        for (int run = 0; run < num_runs; run++)
+        {
+            auto const start = std::chrono::high_resolution_clock::now();
+
+            cudaMalloc(&d_sparse_a, sizeof(I) * matrix_b_comp_t.size());
+            cudaMalloc(&d_dense_b, sizeof(I) * n * n);
+            cudaMalloc(&d_res, sizeof(R) * n * n);
+            cudaMalloc(&d_idx, sizeof(uint32_t) * matrix_b_indices.size());
+
+            cudaMemcpy(d_sparse_a, matrix_b_comp_t.data(), sizeof(I) * matrix_b_comp_t.size(), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_dense_b, matrix_a_t.data(), sizeof(I) * n * n, cudaMemcpyHostToDevice);
+            cudaMemcpy(d_idx, matrix_b_indices.data(), sizeof(uint32_t) * matrix_b_indices.size(), cudaMemcpyHostToDevice);
+            cudaMemset(d_res, 0x0, sizeof(R) * n * n);
+
+            if (tile_size > 0) {
+                assert(n % tile_size == 0 && "n must be a multiple of tile_size");
+                for (std::size_t k_tile = 0; k_tile < n; k_tile += tile_size) {
+                    kernel_wrapper(
+                        d_sparse_a + k_tile,
+                        d_dense_b + k_tile * n,
+                        d_res,
+                        d_idx,
+                        k_tile
+                    );
+                }
+            } else {
+                kernel_wrapper(d_sparse_a, d_dense_b, d_res, d_idx, 0);
+            }
+
+            cudaMemcpy(matrix_c.data(), d_res, sizeof(R) * n * n, cudaMemcpyDeviceToHost);
+            auto const end = std::chrono::high_resolution_clock::now();
+
+            time_sum += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+            cudaFree(d_sparse_a);
+            cudaFree(d_dense_b);
+            cudaFree(d_res);
+            cudaFree(d_idx);
         }
 
         get_results(title, time_sum/num_runs, num_runs);

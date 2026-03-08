@@ -72,10 +72,18 @@ done:
     mul.lo.u64 n_642, n_642, 32; // 8 elements * 4 bytes/element
 
     mov.u32 k, 0;
-    mov.f32 acc0, 0.0;
-    mov.f32 acc1, 0.0;
-    mov.f32 acc2, 0.0;
-    mov.f32 acc3, 0.0;
+    //mov.f32 acc0, 0.0;
+    //mov.f32 acc1, 0.0;
+    //mov.f32 acc2, 0.0;
+    //mov.f32 acc3, 0.0;
+    ld.global.f32 acc0, [cp];
+    add.u64 cp, cp, 4;
+    ld.global.f32 acc1, [cp];
+    add.u64 cp, cp, n_642; 
+    ld.global.f32 acc3, [cp];
+    sub.u64 cp, cp, 4;
+    ld.global.f32 acc2, [cp];
+    ld.param.u64 cp, [out_addr];
 
 loop:
     ldmatrix.sync.aligned.m8n8.x4.b16 {af0, af1, af2, af3}, [ap];
@@ -88,7 +96,7 @@ loop:
     add.u64 ap, ap, 512; // 16 elements (frag x) * 16 elements (frag y) * 2 bytes/element
     add.u64 bp, bp, n_64; 
     add.u32 k, k, 16;
-    setp.lt.u32 p, k, n_reg;
+    setp.lt.u32 p, k, 128;
     @p bra.uni loop;
     
 done:
@@ -104,6 +112,84 @@ done:
     add.u64 cp, cp, n_642; // just a coincidence this works out, will need to modify if types change
     st.global.f32 [cp], acc3;
     sub.u64 cp, cp, 4;
+    st.global.f32 [cp], acc2;
+
+}
+
+.visible .func spmm_helper_mma(.param .u64 matrix_a, .param .u64 matrix_b, 
+                               .param .u64 idx_vec, .param .u64 out_addr, .param .u32 n)
+{
+    .reg .u64   ap, bp, cp, idxp, n_64, n_642, n_643;
+    .reg .u32   k, n_reg, idx;
+    .reg .pred  p;
+    .reg .f16x2 af<4>, bf<2>;
+    .reg .f32   acc<4>;
+    
+    ld.param.u64 ap, [matrix_a];
+    ld.param.u64 bp, [matrix_b];
+    ld.param.u64 cp, [out_addr];
+    ld.param.u64 idxp, [idx_vec];
+    ld.param.u32 n_reg, [n];
+    cvt.u64.u32 n_64, n_reg;
+    mov.u64 n_642, n_64;
+    mov.u64 n_643, n_64;
+    shr.u64 n_643, n_643, 4; // divide by 16
+    mul.lo.u64 n_64, 1024, 2; // 16 elements * 2 bytes/element
+    mul.lo.u64 n_642, n_642, 32; // 8 elements * 4 bytes/element
+
+    mov.u32 k, 0;
+    //mov.f32 acc0, 0.0;
+    //mov.f32 acc1, 0.0;
+    //mov.f32 acc2, 0.0;
+    //mov.f32 acc3, 0.0;
+    ld.global.f32 acc0, [cp];
+    add.u64 cp, cp, n_642; 
+    ld.global.f32 acc1, [cp];
+    add.u64 cp, cp, 4;
+    ld.global.f32 acc3, [cp];
+    sub.u64 cp, cp, n_642;
+    ld.global.f32 acc2, [cp];
+    ld.param.u64 cp, [out_addr];
+
+loop:
+    ld.global.u32 idx, [idxp];
+    //ldmatrix.sync.aligned.m8n8.x4.b16 {af0, af1, af2, af3}, [ap];
+    ldmatrix.sync.aligned.m8n8.x2.b16 {af0, af1}, [ap];
+    ldmatrix.sync.aligned.m8n8.x2.b16 {bf0, bf1}, [bp];
+    //mma.sp.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32 
+    //                                                  {acc0, acc1, acc2, acc3},
+    //                                                  {af0, af1, af2, af3},
+    //                                                  {bf0, bf1},
+    //                                                  {acc0, acc1, acc2, acc3};
+    mma.sp.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 
+                                                      {acc0, acc1, acc2, acc3},
+                                                      {af0, af1},//af2, af3},
+                                                      {bf0, bf1},
+                                                      {acc0, acc1, acc2, acc3},
+                                                      idx,
+                                                      0;
+
+    //add.u64 ap, ap, 512; // 16 elements (frag x) * 16 elements (frag y) * 2 bytes/element
+    add.u64 ap, ap, 128; // 16 elements (frag x) * 16 elements (frag y) * 2 bytes/element
+    add.u64 bp, bp, n_64; 
+    add.u64 idxp, idxp, n_643;
+    add.u32 k, k, 16;
+    setp.lt.u32 p, k, 128;
+    @p bra.uni loop;
+    
+done:
+    // hardcoded for testing
+    //mov.f32 acc0, 1.0;
+    //mov.f32 acc1, 2.0;
+    //mov.f32 acc2, 3.0;
+    //mov.f32 acc3, 4.0;
+
+    st.global.f32 [cp], acc0;
+    add.u64 cp, cp, n_642; 
+    st.global.f32 [cp], acc1;
+    add.u64 cp, cp, 4;
+    st.global.f32 [cp], acc3;
+    sub.u64 cp, cp, n_642;
     st.global.f32 [cp], acc2;
 
 }

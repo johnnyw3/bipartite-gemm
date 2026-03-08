@@ -29,7 +29,7 @@ build/gemm_asm.o: bipartite-gemm/gemm_asm.ptx
 	@#ptxas -arch=$(TARGET) -c -o build/gemm_asm.o bipartite-gemm/gemm_asm.ptx
 	nvcc -arch=$(TARGET) -dc -o build/gemm_asm.o bipartite-gemm/gemm_asm.ptx
 
-build/main.o: bench/main.cu bench/gemm_experiment.h bipartite-gemm/cuda_common.h bipartite-gemm/GEMM.h
+build/main.o: bench/main.cu bench/gemm_experiment.h bench/sparse_utils.h bipartite-gemm/cuda_common.h bipartite-gemm/GEMM.h
 	@mkdir -p build
 	OPENBLAS_NUM_THREADS=$(OPENBLAS_NUM_THREADS) nvcc -dc -o build/main.o bench/main.cu \
     -arch=$(TARGET) -DNUM_SMS=$(NUM_SMS) -DTEST_N=$(TEST_N) \

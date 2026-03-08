@@ -20,10 +20,21 @@ using namespace bipartite;
 int main(int argc, char **argv)
 {   
     bool print_result = false;
+    const char *mat_file_a = nullptr;
+    const char *mat_file_b = nullptr;
 
-    if (argc > 1 && !strncmp(argv[1], "-p", 3)) print_result = true;
+    // Parse arguments: optional -p flag, optional two matrix file paths
+    int arg_idx = 1;
+    if (arg_idx < argc && !strncmp(argv[arg_idx], "-p", 3)) {
+        print_result = true;
+        arg_idx++;
+    }
+    if (arg_idx + 1 < argc) {
+        mat_file_a = argv[arg_idx];
+        mat_file_b = argv[arg_idx + 1];
+    }
 
-    constexpr int multiple = WMMA_M * 4;
+    constexpr int multiple = 128;
 
     // Create a random device
     std::random_device rd;
@@ -59,9 +70,8 @@ int main(int argc, char **argv)
             gridDim.x = (tensorCoreExpFp32.get_n() + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (tensorCoreExpFp32.get_n() + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim >>>(a, b, c, tensorCoreExpFp32.get_n());
-            }, "Tensor Core GEMM FP32 Implementation", 1 );
+            }, "Tensor Core GEMM FP32 Implementation", 10, 128 );
 
-    return 0;
     /*
     **********************************
     * Tensor Core FP32 (multi-stream) GEMM Experiment
@@ -72,13 +82,32 @@ int main(int argc, char **argv)
     std::size_t padded_n = tensorCoreExpFp32Streams.get_n();
     tensorCoreExpFp32Streams.run_experiment_streams( 
         [&tensorCoreExpFp32Streams, padded_n, superblock_sz] (half *a, half *b, float *c, cudaStream_t stream) {
-            const dim3 blockDim { WARP_SZ * 4, 4, 1 };
+            const dim3 blockDim { WARP_SZ * 8, 4, 1 };
             dim3 gridDim;
             gridDim.x = (padded_n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
             gridDim.y = (superblock_sz + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
             tensorcores::gemm<half, float><<< gridDim, blockDim, 0, stream >>>(a, b, c, padded_n, superblock_sz);
-            }, "Tensor Core GEMM FP32 (two streams) Implementation", 1 );
+            }, "Tensor Core GEMM FP32 (two streams) Implementation", 1, 128 );
 
+    /*
+    **********************************
+    * 2:4 SpMM Experiment (file-loaded)
+    **********************************
+    */
+    if (mat_file_a && mat_file_b) {
+        GemmExperiment<half, float> spmmExp{mat_file_a, mat_file_b, (std::size_t)multiple, print_result};
+        std::size_t spmm_n = spmmExp.get_n();
+        spmmExp.run_experiment_sparse(
+            [spmm_n] (half* a, half* b, float* c, uint32_t* idx, std::size_t k_offset) {
+                const dim3 blockDim { WARP_SZ * 8, 4, 1 };
+                dim3 gridDim;
+                gridDim.x = (spmm_n + (WMMA_N * blockDim.x / WARP_SZ - 1)) / (WMMA_N * blockDim.x / WARP_SZ);
+                gridDim.y = (spmm_n + WMMA_M * blockDim.y - 1) / (WMMA_M * blockDim.y);
+                tensorcores::spmm_24<half, float><<<gridDim, blockDim>>>(a, b, c, idx, spmm_n, 0, k_offset);
+            }, "2:4 SpMM Implementation", 10, 128);
+    }
+
+    return 0;
     /*
     **********************************
     * Tensor Core FP16 GEMM Experiment
