@@ -24,12 +24,20 @@ TARGET?=sm_75
 
 all: build/bench
 
+# fix this signature later...
 build/gemm_asm.o: bipartite-gemm/gemm_asm.ptx
 	@mkdir -p build
 	@#ptxas -arch=$(TARGET) -c -o build/gemm_asm.o bipartite-gemm/gemm_asm.ptx
 	nvcc -arch=$(TARGET) -dc -o build/gemm_asm.o bipartite-gemm/gemm_asm.ptx
 
-build/main.o: bench/main.cu bench/gemm_experiment.h bipartite-gemm/cuda_common.h bipartite-gemm/GEMM.h
+build/gemm_asm_pic.o: bipartite-gemm/gemm_asm.ptx
+	@mkdir -p build
+	nvcc -arch=$(TARGET) -dc -Xcompiler -fPIC -o build/gemm_asm_pic.o bipartite-gemm/gemm_asm.ptx
+
+build/gemm_asm.so: build/gemm_asm_pic.o
+	nvcc -arch=$(TARGET) -shared -o build/gemm_asm.so build/gemm_asm_pic.o $(CXXFLAGS)
+
+build/main.o: bench/main.cu build/gemm_asm.so bench/gemm_experiment.h bipartite-gemm/cuda_common.h bipartite-gemm/GEMM.h
 	@mkdir -p build
 	OPENBLAS_NUM_THREADS=$(OPENBLAS_NUM_THREADS) nvcc -dc -o build/main.o bench/main.cu \
     -arch=$(TARGET) -DNUM_SMS=$(NUM_SMS) -DTEST_N=$(TEST_N) \

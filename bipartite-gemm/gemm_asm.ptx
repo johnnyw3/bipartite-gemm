@@ -36,8 +36,6 @@
     mov.f32 acc7, 0.0;
 
 loop:
-    setp.ge.u32 p, k, n_reg;
-    @p bra.uni done;
     wmma.load.a.sync.aligned.row.m16n16k16.f16 {af0, af1, af2, af3, af4, af5, af6, af7}, [ap], n_reg;
     wmma.load.b.sync.aligned.row.m16n16k16.f16 {bf0, bf1, bf2, bf3, bf4, bf5, bf6, bf7}, [bp], n_reg;
     wmma.mma.sync.aligned.row.row.m16n16k16.f32.f32 {acc0, acc1, acc2, acc3, acc4, acc5, acc6, acc7},
@@ -47,7 +45,8 @@ loop:
     add.u64 ap, ap, 32; // 16 elements * 2 bytes
     add.u64 bp, bp, n_64; 
     add.u32 k, k, 16;
-    bra.uni loop;
+    setp.lt.u32 p, k, n_reg;
+    @p bra.uni loop;
     
 done:
     wmma.store.d.sync.aligned.row.m16n16k16.f32 [cp], {acc0, acc1, acc2, acc3, acc4, acc5, acc6, acc7},
